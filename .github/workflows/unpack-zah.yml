@@ -15,29 +15,60 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: main
 
       - name: Unpack zah.zip
         run: |
-          set -e
-          test -f zah.zip
+          set -euo pipefail
+
+          if [ ! -f "zah.zip" ]; then
+            echo "ERROR: zah.zip not found"
+            exit 1
+          fi
+
           rm -rf extracted
-          mkdir extracted
+          mkdir -p extracted
+
           unzip -q zah.zip -d extracted
+
           cp -a extracted/. .
+
           rm -rf extracted
           rm -f zah.zip
 
-      - name: Commit and push
+      - name: Sync with latest main and push
         run: |
-          set -e
+          set -euo pipefail
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add -A
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
           git commit -m "Unpack zah.zip"
 
           git fetch origin main
           git rebase origin/main
 
           git push origin HEAD:main
+
+      - name: Verify
+        run: |
+          set -euo pipefail
+
+          if [ -f "zah.zip" ]; then
+            echo "ERROR: zah.zip still exists"
+            exit 1
+          fi
+
+          if [ ! -d "whatsapp-restaurant-bot" ]; then
+            echo "ERROR: extracted project folder is missing"
+            exit 1
+          fi
+
+          echo "SUCCESS: zah.zip was unpacked and removed successfully."
