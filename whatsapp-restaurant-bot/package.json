@@ -1,0 +1,23 @@
+{
+  "name": "whatsapp-restaurant-bot",
+  "version": "1.0.0",
+  "description": "بوت واتساب متعدد المطاعم مع Dashboard ويب",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.5.0",
+    "qrcode": "^1.5.3",
+    "whatsapp-web.js": "^1.26.0",
+    "wwebjs-mongo": "^1.1.0"
+  }
+}
