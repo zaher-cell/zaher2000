@@ -20,20 +20,14 @@ jobs:
         run: |
           set -e
           test -f zah.zip
-
           rm -rf extracted
           mkdir extracted
-
           unzip -q zah.zip -d extracted
-
-          # نسخ الملفات مع الحفاظ على الهيكل والمحتوى
           cp -a extracted/. .
-
-          # حذف الملفات المؤقتة
           rm -rf extracted
           rm -f zah.zip
 
-      - name: Commit and push safely
+      - name: Commit and push
         run: |
           set -e
 
@@ -41,12 +35,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add -A
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
-          fi
-
           git commit -m "Unpack zah.zip"
 
           git fetch origin main
