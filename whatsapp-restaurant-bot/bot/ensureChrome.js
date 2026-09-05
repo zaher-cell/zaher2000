@@ -2,22 +2,65 @@ const path = require("path");
 const fs = require("fs");
 
 /**
+ * تحقق سريع من وجود Chrome/Chromium النظامي في متغيرات البيئة أو مسارات شائعة.
+ * يعيد المسار لو وُجد وقابل للتنفيذ، وإلا undefined.
+ */
+function findSystemChrome() {
+  const candidates = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    process.env.CHROME_PATH,
+    process.env.CHROME_BIN,
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+    "/snap/bin/chromium",
+    "/opt/google/chrome/chrome",
+  ].filter(Boolean);
+
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) {
+        try {
+          fs.accessSync(p, fs.constants.X_OK);
+          console.log(`✅ [Chrome] وجدت Chrome النظامي على: ${p}`);
+          return p;
+        } catch (_) {
+          try {
+            fs.accessSync(p, fs.constants.R_OK);
+            console.warn(`⚠️ [Chrome] وجدنا ملف Chrome عند ${p} لكنه قد لا يكون قابلًا للتنفيذ (الأذونات). سنحاول استخدامه.`);
+            return p;
+          } catch (_) {
+            // تجاهل وانتقل للمرشح التالي
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  return undefined;
+}
+
+/**
  * يثبّت متصفح Chrome برمجياً عند إقلاع السيرفر.
- *
- * يحاول تنزيل Chrome عبر @puppeteer/browsers لكن يضع حد زمني للتنزيل
- * حتى لا يعلق التطبيق عند 99% في بيئات مثل Render. إذا انتهت المهلة
- * نلغِي المحاولة ونعود undefined حتى يستعمل puppeteer إعداداته الافتراضية
- * أو يستفيد من Chrome النظامي (لو مُحدد عبر PATH أو env).
- *
- * يمكن تغيير المهلة عبر المتغير البيئي PUPPETEER_INSTALL_TIMEOUT_MS (ملليثانية).
- *
- * @returns {Promise<string|undefined>} مسار Chrome التنفيذي إذا نجح التثبيت أو التحقق
+ * أولاً: حاول استخدام Chrome النظامي إن وُجد. إن لم يوجد، حاول التنزيل (بمهلة أطول، وسجلات أوضح).
  */
 async function ensureChromeInstalled() {
   const { install, detectBrowserPlatform, computeExecutablePath, resolveBuildId } = require("@puppeteer/browsers");
 
+  // 1) تحقق سريع من Chrome النظامي أولاً
+  const sys = findSystemChrome();
+  if (sys) return sys;
+
   const cacheDir =
     process.env.PUPPETEER_CACHE_DIR || path.join(__dirname, "..", ".cache", "puppeteer");
+
+  // تأكد أن مجلد الـcache موجود وقابل للكتابة (تخزين الملفات المؤقتة)
+  try {
+    fs.mkdirSync(cacheDir, { recursive: true });
+  } catch (err) {
+    console.warn(`⚠️ [Chrome] تعذر إنشاء مجلد cache ${cacheDir}: ${err.message}`);
+  }
 
   const platform = detectBrowserPlatform();
   if (!platform) {
@@ -28,14 +71,14 @@ async function ensureChromeInstalled() {
   let buildId;
   try {
     buildId = await resolveBuildId("chrome", platform, process.env.PUPPETEER_CHROME_CHANNEL || "stable");
-    console.log(`ℹ️ [Chrome] القناة المطلوبة "stable" تقابل الإصدار: ${buildId}`);
+    console.log(`ℹ️ [Chrome] القناة المطلوبة \"stable\" تقابل الإصدار: ${buildId}`);
   } catch (err) {
-    // نرجع لرقم إصدار Puppeteer الداخلي فقط إذا فشل تحديد قناة "stable" لأي سبب
     buildId = process.env.PUPPETEER_CHROME_BUILD_ID || "146.0.7680.31";
-    console.warn(`⚠️ [Chrome] تعذر تحديد إصدار "stable" (${err.message})، سنجرب: ${buildId}`);
+    console.warn(`⚠️ [Chrome] تعذر تحديد إصدار \"stable\" (${err.message})، سنجرب: ${buildId}`);
   }
 
-  const INSTALL_TIMEOUT_MS = Number(process.env.PUPPETEER_INSTALL_TIMEOUT_MS) || 2 * 60 * 1000; // 2 minutes default
+  // نجعل المهلة أكبر (افتراضي 10 دقائق = 600000 ms). يمكن تغييره عبر env PUPPETEER_INSTALL_TIMEOUT_MS
+  const INSTALL_TIMEOUT_MS = Number(process.env.PUPPETEER_INSTALL_TIMEOUT_MS) || 10 * 60 * 1000;
 
   const attemptOnce = async () => {
     const expectedPath = computeExecutablePath({ browser: "chrome", buildId, cacheDir, platform });
@@ -45,8 +88,7 @@ async function ensureChromeInstalled() {
       return expectedPath;
     }
 
-    // لو كان هناك مجلد ناقص من محاولة سابقة فاشلة، نحذفه أولاً حتى لا يخدع
-    // install() ويجعلها تتخطى التنزيل الحقيقي
+    // نحذف مجلد جزئي سابق إن وجد
     const buildFolder = path.dirname(path.dirname(expectedPath));
     if (fs.existsSync(buildFolder)) {
       console.log(`🧹 [Chrome] حذف مجلد ناقص من محاولة سابقة: ${buildFolder}`);
@@ -60,7 +102,6 @@ async function ensureChromeInstalled() {
     console.log(`⏳ [Chrome] جاري التثبيت داخل: ${cacheDir} (الإصدار ${buildId})...`);
     let lastLoggedPct = -1;
 
-    // Wrap the install() call with a timeout to avoid indefinite hanging (e.g., stuck at 99%)
     const installPromise = install({
       cacheDir,
       browser: "chrome",
@@ -69,17 +110,19 @@ async function ensureChromeInstalled() {
       downloadProgressCallback: (downloadedBytes, totalBytes) => {
         if (!totalBytes) return;
         const pct = Math.floor((downloadedBytes / totalBytes) * 100);
-        if (pct >= lastLoggedPct + 10) {
+        // سجل كل 5% لتتبع أدق
+        if (pct >= lastLoggedPct + 5) {
           lastLoggedPct = pct;
           console.log(`   [Chrome] تنزيل: ${pct}%`);
         }
-        // Log when reaching near completion to indicate extraction phase
-        if (pct >= 98 && pct < 100) {
-          console.log(`   [Chrome] تنزيل قريب من الاكتمال (${pct}%) — قد يبدأ الآن فك ضغط/التحقق`);
+        // توضيح أن المرحلة التالية قد تكون فك ضغط/التحقق
+        if (pct >= 95 && pct < 100) {
+          console.log(`   [Chrome] تنزيل قريب من الاكتمال (${pct}%) — قد يبدأ الآن فك ضغط/التحقق (قد يستغرق وقتًا)`);
         }
       },
     });
 
+    // مهلة أطول + تنظيف بقايا عند الفشل
     let timeoutHandle;
     const timeoutPromise = new Promise((_, reject) => {
       timeoutHandle = setTimeout(() => {
@@ -88,12 +131,15 @@ async function ensureChromeInstalled() {
     });
 
     try {
-      // If install() doesn't finish within the timeout we catch and cleanup
       await Promise.race([installPromise, timeoutPromise]);
     } catch (err) {
-      // تنظيف أي بقايا قد تكون خلفت محاولة جزئية
+      // عند الفشل سجّل محتوى buildFolder لمزيد من التشخيص ثم نظّف
       try {
         if (fs.existsSync(buildFolder)) {
+          try {
+            const listing = fs.readdirSync(buildFolder);
+            console.error(`❌ [Chrome] محتوى buildFolder عند الفشل: ${JSON.stringify(listing)}`);
+          } catch (_) {}
           console.log(`🧹 [Chrome] حذف بقايا بعد فشل التثبيت: ${buildFolder}`);
           fs.rmSync(buildFolder, { recursive: true, force: true });
         }
@@ -105,7 +151,7 @@ async function ensureChromeInstalled() {
       if (timeoutHandle) clearTimeout(timeoutHandle);
     }
 
-    // تحقق فعلي — لا نثق أن install() نجح لمجرد عدم رمي خطأ
+    // تحقق فعلي
     if (fs.existsSync(expectedPath)) {
       console.log(`✅ [Chrome] تم التثبيت والتحقق منه على: ${expectedPath}`);
       return expectedPath;
