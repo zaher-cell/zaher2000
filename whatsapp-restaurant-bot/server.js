@@ -27,15 +27,33 @@ async function start() {
     await connectDB();
     await autoSeed();
 
-    const client = await createClient();
-    attachRouter(client);
-    client.initialize();
-
-    app.listen(PORT, () => {
+    // Important: Start listening BEFORE initializing the WhatsApp client.
+    // This ensures the host (Render) detects an open port quickly and doesn't
+    // kill the service while the potentially long Chrome / Puppeteer
+    // installation runs in the background.
+    const server = app.listen(PORT, () => {
       console.log(`🚀 السيرفر يعمل على المنفذ ${PORT}`);
       console.log(`   الداشبورد: افتح الرابط الأساسي في المتصفح`);
     });
+
+    // Initialize the WhatsApp client asynchronously so it doesn't block
+    // the server from binding the port. Errors from the client should not
+    // bring down the whole process — they are logged for debugging.
+    createClient()
+      .then((client) => {
+        try {
+          attachRouter(client);
+          client.initialize();
+        } catch (err) {
+          console.error("❌ خطأ أثناء تهيئة عميل واتساب:", err);
+        }
+      })
+      .catch((err) => {
+        // createClient failed (e.g., Chrome install failed). Log but don't exit.
+        console.error("❌ فشل إنشاء عميل واتساب (لن يتم إيقاف السيرفر):", err);
+      });
   } catch (err) {
+    // Critical errors (DB/connect/seed) should still stop the process.
     console.error("❌ فشل بدء التشغيل:", err);
     process.exit(1);
   }
