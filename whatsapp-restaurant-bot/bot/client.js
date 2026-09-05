@@ -20,7 +20,31 @@ async function createClient() {
   const store = new MongoStore({ mongoose });
 
   // نتأكد برمجياً من وجود Chrome ونحصل على مساره الفعلي
-  const executablePath = await ensureChromeInstalled();
+  let executablePath;
+  try {
+    // لا نجعل ensureChromeInstalled يوقف التشغيل لأكثر من 60s
+    const installPromise = ensureChromeInstalled();
+    executablePath = await Promise.race([
+      installPromise,
+      new Promise((resolve) => setTimeout(() => resolve(undefined), 60 * 1000)),
+    ]);
+
+    if (executablePath) {
+      try {
+        const fs = require("fs");
+        fs.accessSync(executablePath, fs.constants.X_OK);
+        console.log(`ℹ️ [Chrome] سيتم استخدام المتصفح على: ${executablePath}`);
+      } catch (err) {
+        console.warn(`⚠️ [Chrome] المسار المُعطى غير قابل للتنفيذ أو غير موجود: ${executablePath} — سنتجاهله`);
+        executablePath = undefined;
+      }
+    } else {
+      console.log("ℹ️ [Chrome] لم يُعثر على مسار Chrome أو انتهت مهلة التثبيت — سيحاول puppeteer استخدام المتصفح النظامي أو الإعداد الافتراضي.");
+    }
+  } catch (err) {
+    console.error("❌ [Chrome] فشل التحقق/التثبيت بدون تعطيل السيرفر:", err.message || err);
+    executablePath = undefined;
+  }
 
   client = new Client({
     authStrategy: new RemoteAuth({
@@ -100,5 +124,5 @@ function getState() {
 module.exports = {
   createClient,
   getClient,
-  getState
+  getState,
 };
