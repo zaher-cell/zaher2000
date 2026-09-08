@@ -9,7 +9,7 @@ const Coupon = require("../models/Coupon");
 const Customer = require("../models/Customer");
 const { requireAuth } = require("../middleware/jwtAuth");
 const { hashPassword } = require("../utils/hash");
-const { getState, requestPairingCode, cancelPairingCode } = require("../bot/client");
+const { getState, requestPairingCode, cancelPairing } = require("../bot/client");
 const { sendWhatsAppMessage } = require("../bot/notify");
 const { applyOrderStatusSideEffects } = require("../bot/orderEvents");
 const msg = require("../bot/messages");
@@ -21,21 +21,20 @@ router.get("/whatsapp/status", requireAuth(["admin"]), (req, res) => {
   res.json(getState());
 });
 
-// طلب كود اقتران (Pairing Code) لرقم هاتف — طريقة ربط ثانية بجانب QR
+// طلب كود اقتران (Pairing Code) بديل عن مسح QR — لربط الجهاز برقم مباشرة
 router.post("/whatsapp/pairing-code", requireAuth(["admin"]), async (req, res) => {
   try {
-    const { phoneNumber } = req.body;
-    const code = await requestPairingCode(phoneNumber);
+    const code = await requestPairingCode(req.body.phoneNumber);
     res.json({ code });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-// إلغاء طلب كود الاقتران الحالي
+// إلغاء كود الاقتران والرجوع لوضع QR
 router.post("/whatsapp/pairing-code/cancel", requireAuth(["admin"]), async (req, res) => {
   try {
-    await cancelPairingCode();
+    await cancelPairing();
     res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -272,7 +271,7 @@ router.put("/orders/:id/status", requireAuth(["admin", "restaurant", "driver"]),
   res.json(order);
 });
 
-// ==================== لوح�� إحصائيات الأدمن العامة ====================
+// ==================== لوحة إحصائيات الأدمن العامة ====================
 router.get("/admin/overview", requireAuth(["admin"]), async (req, res) => {
   const [restaurantsCount, driversCount, ordersAgg, customersCount] = await Promise.all([
     Restaurant.countDocuments(),
