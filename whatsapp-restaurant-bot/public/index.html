@@ -63,6 +63,21 @@
           </div>
           <img id="qrImage" />
         </div>
+
+        <div class="card" id="pairingCard">
+          <div class="page-sub" style="margin-bottom:10px;">أو اربط باستخدام رقم الهاتف: واتساب ← الأجهزة المرتبطة ← ربط جهاز ← الربط برقم الهاتف</div>
+          <div class="form-grid full">
+            <label>رقم الجوال بصيغة دولية بدون + (مثال: 9665xxxxxxxx)</label>
+            <input id="pairingPhone" type="tel" placeholder="9665xxxxxxxx" />
+          </div>
+          <button class="btn primary" id="pairingRequestBtn" onclick="requestPairingCode()">طلب كود الاقتران</button>
+          <div id="pairingCodeBox" style="display:none; margin-top:14px;">
+            <div class="muted-text">أدخل هذا الكود في واتساب خلال دقائق قليلة:</div>
+            <div id="pairingCodeValue" class="pairing-code-value"></div>
+            <button class="btn small" onclick="cancelPairingCode()">إلغاء</button>
+          </div>
+          <div class="login-error" id="pairingError"></div>
+        </div>
       </div>
 
       <!-- أدمن: نظرة عامة -->
