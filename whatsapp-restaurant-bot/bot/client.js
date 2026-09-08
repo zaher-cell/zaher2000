@@ -9,6 +9,9 @@ const state = {
   status: "starting", // starting | qr | authenticated | ready | disconnected
   qrDataUrl: null,
   lastMessage: "جاري بدء تشغيل البوت...",
+  // كود الاقتران (Pairing Code) — طريقة ثانية للربط بجانب QR، عبر رقم الهاتف
+  pairingCode: null,
+  pairingPhoneNumber: null,
 };
 
 let client = null;
@@ -20,7 +23,7 @@ let client = null;
  */
 async function createClient() {
   // نجهز Chrome ونتحقق أنه يعمل فعلياً *قبل* إنشاء عميل واتساب — لو فشل هذا،
-  // نرمي الخطأ فوراً وواضحاً ولا ننشئ عميل واتساب بمسار غير صالح إطلاقاً.
+  // نرمي الخطأ ��وراً وواضحاً ولا ننشئ عميل واتساب بمسار غير صالح إطلاقاً.
   let executablePath, args;
   try {
     const chrome = await ensureChromeReady();
@@ -37,7 +40,7 @@ async function createClient() {
   client = new Client({
     authStrategy: new RemoteAuth({
       store,
-      backupSyncIntervalMs: 5 * 60 * 1000, // نسخ احتياطي للجلسة كل 5 دقائق
+      backupSyncIntervalMs: 5 * 60 * 1000,
     }),
     puppeteer: {
       headless: true,
@@ -53,8 +56,17 @@ async function createClient() {
     console.log("📱 كود QR جاهز — افتح /qr في المتصفح لمسحه");
   });
 
+  client.on("code", (code) => {
+    state.pairingCode = code;
+    state.status = "qr";
+    state.lastMessage = `أدخل الكود ${code} في واتساب: الأجهزة المرتبطة ← ربط جهاز ← الربط برقم الهاتف`;
+    console.log("🔢 كود الاقتران جاهز:", code);
+  });
+
   client.on("authenticated", () => {
     state.status = "authenticated";
+    state.pairingCode = null;
+    state.pairingPhoneNumber = null;
     state.lastMessage = "تم تسجيل الدخول، جاري تجهيز البوت...";
     console.log("🔐 تم تسجيل الدخول بنجاح");
   });
@@ -66,6 +78,8 @@ async function createClient() {
   client.on("ready", () => {
     state.status = "ready";
     state.qrDataUrl = null;
+    state.pairingCode = null;
+    state.pairingPhoneNumber = null;
     state.lastMessage = "البوت يعمل الآن ومتصل بواتساب ✅";
     console.log("✅ بوت واتساب جاهز ويستقبل الطلبات");
   });
@@ -93,4 +107,30 @@ function getState() {
   return state;
 }
 
-module.exports = { createClient, getClient, getState };
+async function requestPairingCode(phoneNumber) {
+  if (!client) throw new Error("عميل واتساب غير جاهز بعد، انتظر قليلاً وحاول مجدداً");
+  if (!phoneNumber || !/^\d{7,15}$/.test(phoneNumber)) {
+    throw new Error("رقم الهاتف غير صالح — أدخله بصيغة دولية بدون + أو رموز (مثال: 9665xxxxxxxx)");
+  }
+  if (state.status === "ready" || state.status === "authenticated") {
+    throw new Error("الحساب مرتبط بالفعل بواتساب");
+  }
+
+  const code = await client.requestPairingCode(phoneNumber);
+  state.pairingCode = code;
+  state.pairingPhoneNumber = phoneNumber;
+  state.status = "qr";
+  state.lastMessage = `أدخل الكود ${code} في واتساب: الأجهزة المرتبطة ← ربط جهاز ← الربط برقم الهاتف`;
+  return code;
+}
+
+async function cancelPairingCode() {
+  if (!client) throw new Error("عميل واتساب غير جاهز بعد");
+  if (typeof client.cancelPairingCode === "function") {
+    await client.cancelPairingCode();
+  }
+  state.pairingCode = null;
+  state.pairingPhoneNumber = null;
+}
+
+module.exports = { createClient, getClient, getState, requestPairingCode, cancelPairingCode };
