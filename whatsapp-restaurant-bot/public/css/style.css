@@ -116,6 +116,12 @@ button, input, select, textarea { font-family: inherit; }
 .status-pill.disconnected { background: rgba(228,87,76,0.15); color: var(--red); }
 #qrImage { max-width: 260px; border-radius: 10px; border: 1px solid var(--border); margin-top: 14px; display: none; }
 
+.pairing-code-value {
+  font-family: monospace; font-size: 28px; font-weight: 700; letter-spacing: 6px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px 16px; margin: 8px 0; text-align: center; direction: ltr;
+}
+
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 th, td { padding: 10px 12px; text-align: right; border-bottom: 1px solid var(--border); }
 th { color: var(--muted); font-weight: 600; font-size: 12.5px; }
