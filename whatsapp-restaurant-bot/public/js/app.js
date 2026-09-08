@@ -157,7 +157,53 @@ async function pollConnection() {
     if (dot) dot.className = "nav-dot " + (state.status === "ready" ? "ready" : state.status === "qr" ? "waiting" : "");
     const img = document.getElementById("qrImage");
     if (state.qrDataUrl) { img.src = state.qrDataUrl; img.style.display = "block"; } else { img.style.display = "none"; }
+
+    // مزامنة كود الاقتران (لو تم توليده من الخادم من قبل، مثلاً بعد تحديث الصفحة)
+    const codeBox = document.getElementById("pairingCodeBox");
+    const codeValue = document.getElementById("pairingCodeValue");
+    if (codeBox && codeValue) {
+      if (state.pairingCode) {
+        codeValue.innerText = state.pairingCode;
+        codeBox.style.display = "block";
+      } else {
+        codeBox.style.display = "none";
+      }
+    }
   } catch (_) {}
+}
+
+// طلب كود اقتران (Pairing Code) لرقم هاتف مُدخل من الأدمن — بديل عن مسح QR
+async function requestPairingCode() {
+  const phoneInput = document.getElementById("pairingPhone");
+  const errBox = document.getElementById("pairingError");
+  const btn = document.getElementById("pairingRequestBtn");
+  errBox.innerText = "";
+  const phoneNumber = (phoneInput.value || "").replace(/\D/g, "");
+  if (!phoneNumber) { errBox.innerText = "أدخل رقم الهاتف أولاً"; return; }
+  btn.disabled = true;
+  try {
+    const { code } = await api("/whatsapp/pairing-code", {
+      method: "POST",
+      body: JSON.stringify({ phoneNumber }),
+    });
+    document.getElementById("pairingCodeValue").innerText = code;
+    document.getElementById("pairingCodeBox").style.display = "block";
+  } catch (err) {
+    errBox.innerText = err.message || "تعذر توليد كود الاقتران";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// إلغاء كود الاقتران الحالي
+async function cancelPairingCode() {
+  try {
+    await api("/whatsapp/pairing-code/cancel", { method: "POST" });
+  } catch (_) {
+    // نتجاهل الخطأ هنا لأن الهدف الأساسي هو إخفاء الكود من الواجهة فوراً
+  } finally {
+    document.getElementById("pairingCodeBox").style.display = "none";
+  }
 }
 
 // ---------------- نظرة عامة (أدمن) ----------------
