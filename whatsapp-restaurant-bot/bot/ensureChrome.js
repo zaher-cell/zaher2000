@@ -39,7 +39,12 @@ async function ensureChromeReady() {
     `✅ [Chrome] الملف التنفيذي موجود وصالح: ${executablePath} (${Math.round(stat.size / 1024 / 1024)}MB)`
   );
 
-  const args = [...chromium.args, "--disable-dev-shm-usage"];
+  // نستثني --single-process تحديداً: موصى بها من @sparticuz/chromium أصلاً
+  // لبيئات serverless قصيرة العمر (طلب واحد ثم إغلاق)، لكن جلسة واتساب عندنا
+  // تبقى تعمل لساعات/أيام — وهذا الخيار معروف بتسببه في تجمّد أو انهيار صامت
+  // للصفحة بعد فترة طويلة من الاستخدام (البوت يبدو متصلاً لكن يتوقف عن
+  // استقبال الرسائل). كل الخيارات الأخرى الموصى بها تبقى كما هي.
+  const args = [...chromium.args.filter((a) => a !== "--single-process"), "--disable-dev-shm-usage"];
 
   console.log("⏳ [Chrome] تجربة تشغيل فعلية للتأكد قبل تشغيل واتساب...");
   const testBrowser = await puppeteerCore.launch({ executablePath, args, headless: true });
