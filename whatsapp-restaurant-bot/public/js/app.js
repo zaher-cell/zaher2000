@@ -158,52 +158,42 @@ async function pollConnection() {
     const img = document.getElementById("qrImage");
     if (state.qrDataUrl) { img.src = state.qrDataUrl; img.style.display = "block"; } else { img.style.display = "none"; }
 
-    // مزامنة كود الاقتران (لو تم توليده من الخادم من قبل، مثلاً بعد تحديث الصفحة)
-    const codeBox = document.getElementById("pairingCodeBox");
-    const codeValue = document.getElementById("pairingCodeValue");
-    if (codeBox && codeValue) {
+    const pairingDisplay = document.getElementById("pairingCodeDisplay");
+    const pairingCard = document.getElementById("pairingCard");
+    if (pairingDisplay) {
       if (state.pairingCode) {
-        codeValue.innerText = state.pairingCode;
-        codeBox.style.display = "block";
+        document.getElementById("pairingCodeValue").innerText = state.pairingCode;
+        pairingDisplay.style.display = "block";
       } else {
-        codeBox.style.display = "none";
+        pairingDisplay.style.display = "none";
       }
+    }
+    if (pairingCard) {
+      // بعد نجاح الربط لا داعي لإظهار بطاقة كود الاقتران إطلاقاً
+      pairingCard.style.display = (state.status === "ready" || state.status === "authenticated") ? "none" : "";
     }
   } catch (_) {}
 }
 
-// طلب كود اقتران (Pairing Code) لرقم هاتف مُدخل من الأدمن — بديل عن مسح QR
 async function requestPairingCode() {
-  const phoneInput = document.getElementById("pairingPhone");
-  const errBox = document.getElementById("pairingError");
-  const btn = document.getElementById("pairingRequestBtn");
-  errBox.innerText = "";
-  const phoneNumber = (phoneInput.value || "").replace(/\D/g, "");
-  if (!phoneNumber) { errBox.innerText = "أدخل رقم الهاتف أولاً"; return; }
-  btn.disabled = true;
+  const phoneNumber = document.getElementById("pairingPhone").value.trim();
+  const errEl = document.getElementById("pairingError");
+  errEl.innerText = "";
+  if (!phoneNumber) { errEl.innerText = "أدخل رقم الهاتف أولاً"; return; }
   try {
-    const { code } = await api("/whatsapp/pairing-code", {
-      method: "POST",
-      body: JSON.stringify({ phoneNumber }),
-    });
-    document.getElementById("pairingCodeValue").innerText = code;
-    document.getElementById("pairingCodeBox").style.display = "block";
+    await api("/whatsapp/pairing-code", { method: "POST", body: JSON.stringify({ phoneNumber }) });
+    pollConnection();
   } catch (err) {
-    errBox.innerText = err.message || "تعذر توليد كود الاقتران";
-  } finally {
-    btn.disabled = false;
+    errEl.innerText = err.message || "تعذر الحصول على كود الاقتران";
   }
 }
 
-// إلغاء كود الاقتران الحالي
 async function cancelPairingCode() {
   try {
     await api("/whatsapp/pairing-code/cancel", { method: "POST" });
-  } catch (_) {
-    // نتجاهل الخطأ هنا لأن الهدف الأساسي هو إخفاء الكود من الواجهة فوراً
-  } finally {
-    document.getElementById("pairingCodeBox").style.display = "none";
-  }
+    document.getElementById("pairingCodeDisplay").style.display = "none";
+    pollConnection();
+  } catch (_) {}
 }
 
 // ---------------- نظرة عامة (أدمن) ----------------
