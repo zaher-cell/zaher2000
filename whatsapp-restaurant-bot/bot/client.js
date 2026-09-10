@@ -40,6 +40,11 @@ async function createClient() {
   const store = new MongoStore({ mongoose });
 
   client = new Client({
+    // يمنع خطأ "Execution context was destroyed" الذي يحدث عند محاولة
+    // المكتبة قراءة نسخة واتساب ويب من نسخة مخزّنة/قديمة داخلها أثناء
+    // Client.inject() — بهذا الإعداد تُقرأ النسخة الحية دائماً من واتساب
+    // نفسه بدل الاعتماد على مرجع قديم قد لا يتوافق مع واجهة واتساب الحالية.
+    webVersionCache: { type: "none" },
     authStrategy: new RemoteAuth({
       store,
       backupSyncIntervalMs: 5 * 60 * 1000, // نسخ احتياطي للجلسة كل 5 دقائق
