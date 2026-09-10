@@ -8,8 +8,10 @@ const { ensureChromeReady } = require("./ensureChrome");
 const state = {
   status: "starting", // starting | qr | authenticated | ready | disconnected
   qrDataUrl: null,
-  pairingCode: null, // كود الاقتران النصي (مثال: ABCD-EFGH) إن طُلب بدل QR
   lastMessage: "جاري بدء تشغيل البوت...",
+  // كود الاقتران (Pairing Code) — طريقة ثانية للربط بجانب QR، عبر رقم الهاتف
+  pairingCode: null,
+  pairingPhoneNumber: null,
 };
 
 let client = null;
@@ -22,11 +24,13 @@ let client = null;
 async function createClient() {
   // نجهز Chrome ونتحقق أنه يعمل فعلياً *قبل* إنشاء عميل واتساب — لو فشل هذا،
   // نرمي الخطأ فوراً وواضحاً ولا ننشئ عميل واتساب بمسار غير صالح إطلاقاً.
-  let executablePath, args;
+  let executablePath, args, headless, defaultViewport;
   try {
     const chrome = await ensureChromeReady();
     executablePath = chrome.executablePath;
     args = chrome.args;
+    headless = chrome.headless;
+    defaultViewport = chrome.defaultViewport;
   } catch (err) {
     state.status = "disconnected";
     state.lastMessage = `فشل تجهيز المتصفح: ${err.message}`;
@@ -41,31 +45,33 @@ async function createClient() {
       backupSyncIntervalMs: 5 * 60 * 1000, // نسخ احتياطي للجلسة كل 5 دقائق
     }),
     puppeteer: {
-      headless: true,
+      headless,
       executablePath,
       args,
+      defaultViewport,
     },
   });
 
   client.on("qr", async (qr) => {
     state.status = "qr";
-    state.pairingCode = null;
-    state.lastMessage = "امسح رمز QR من صفحة /qr في الداشبورد لربط الواتساب، أو استخدم كود الاقتران بدلاً منه";
+    state.lastMessage = "امسح رمز QR من صفحة /qr في الداشبورد لربط الواتساب";
     state.qrDataUrl = await qrcode.toDataURL(qr);
     console.log("📱 كود QR جاهز — افتح /qr في المتصفح لمسحه");
   });
 
-  // يُطلق تلقائياً من مكتبة whatsapp-web.js بعد استدعاء requestPairingCode بنجاح
+  // يصدر عند طلب/تجديد كود الاقتران عبر requestPairingCode — نبقي الحالة متزامنة
+  // مع ما يعرضه واتساب فعلياً (بدل الاعتماد فقط على القيمة المُعادة من الطلب).
   client.on("code", (code) => {
-    state.status = "qr";
     state.pairingCode = code;
-    state.lastMessage = "أدخل كود الاقتران هذا في واتساب لربط الجهاز";
-    console.log(`🔢 كود الاقتران جاهز: ${code}`);
+    state.status = "qr";
+    state.lastMessage = `أدخل الكود ${code} في واتساب: الأجهزة المرتبطة ← ربط جهاز ← الربط برقم الهاتف`;
+    console.log("🔢 كود الاقتران جاهز:", code);
   });
 
   client.on("authenticated", () => {
     state.status = "authenticated";
     state.pairingCode = null;
+    state.pairingPhoneNumber = null;
     state.lastMessage = "تم تسجيل الدخول، جاري تجهيز البوت...";
     console.log("🔐 تم تسجيل الدخول بنجاح");
   });
@@ -77,6 +83,8 @@ async function createClient() {
   client.on("ready", () => {
     state.status = "ready";
     state.qrDataUrl = null;
+    state.pairingCode = null;
+    state.pairingPhoneNumber = null;
     state.lastMessage = "البوت يعمل الآن ومتصل بواتساب ✅";
     console.log("✅ بوت واتساب جاهز ويستقبل الطلبات");
   });
@@ -85,18 +93,6 @@ async function createClient() {
     state.status = "disconnected";
     state.lastMessage = `انقطع الاتصال: ${reason}`;
     console.log("⚠️ انقطع اتصال واتساب:", reason);
-
-    // انقطاع غير مقصود (شبكة، انهيار صفحة، إلخ) → نحاول إعادة التهيئة تلقائياً
-    // بما أن الجلسة محفوظة في MongoDB (RemoteAuth) فلن يحتاج مسح QR/كود مرة ثانية.
-    // "LOGOUT" فقط يعني أن المستخدم فصل الجهاز فعلياً من واتساب نفسه — لا نعيد المحاولة حينها.
-    if (reason !== "LOGOUT") {
-      console.log("🔁 محاولة إعادة الاتصال تلقائياً خلال 10 ثوانٍ...");
-      setTimeout(() => {
-        client.initialize().catch((err) => {
-          console.error("❌ فشلت إعادة المحاولة التلقائية:", err.message);
-        });
-      }, 10000);
-    }
   });
 
   client.on("auth_failure", (msg) => {
@@ -105,46 +101,25 @@ async function createClient() {
     console.log("❌ فشل تسجيل الدخول:", msg);
   });
 
+  // يعرض تقدّم تحميل واجهة واتساب داخل Chromium — مفيد جداً لمعرفة هل توقف
+  // التحميل عند نسبة معينة (دليل تجمّد/تعطّل المتصفح) بدل الاختفاء الصامت.
+  client.on("loading_screen", (percent, message) => {
+    state.lastMessage = `جاري تحميل واتساب... ${percent}% ${message || ""}`.trim();
+    console.log(`⏳ [تحميل واتساب] ${percent}% ${message || ""}`);
+  });
+
+  // تغييرات الحالة الداخلية لبروتوكول واتساب (مثل CONFLICT أو UNPAIRED) —
+  // تسجيلها فقط لأغراض التشخيص، لا تغيّر منطق التطبيق.
+  client.on("change_state", (newState) => {
+    console.log("🔄 [حالة واتساب الداخلية] تغيّرت إلى:", newState);
+  });
+
+  // whatsapp-web.js لا يصدر عادة حدث "error" عاماً، لكن نسجله دفاعياً إن حدث.
+  client.on("error", (err) => {
+    console.error("❌ [خطأ من عميل واتساب]:", err);
+  });
+
   return client;
-}
-
-/**
- * يطلب كود اقتران (Pairing Code) من واتساب لربط الجهاز برقم هاتف مباشرة،
- * بديل لمسح QR من نفس الجهاز بدون كاميرا/جهاز ثانٍ. لا يُنشئ عميلاً جديداً
- * ولا يمس جلسة RemoteAuth — يستخدم العميل الحالي نفسه الذي يعمل أصلاً.
- * @param {string} phoneNumber رقم دولي بدون + وبدون مسافات أو رموز (مثال: 966501234567)
- * @returns {Promise<string>} الكود بصيغة مثل "ABCDEFGH"
- * @throws {Error} إذا لم يكن العميل جاهزاً لطلب كود اقتران (مثلاً بعد تسجيل الدخول فعلاً)
- */
-async function requestPairingCode(phoneNumber) {
-  if (!client) {
-    throw new Error("عميل واتساب غير مهيأ بعد — انتظر حتى تظهر حالة الاتصال أولاً");
-  }
-  if (state.status === "ready" || state.status === "authenticated") {
-    throw new Error("الحساب مرتبط بالفعل — لا حاجة لكود اقتران جديد");
-  }
-  if (state.status !== "qr") {
-    // الصفحة الداخلية (pupPage) لسه ما جهزت — لو نادينا requestPairingCode الآن
-    // بيطلع خطأ تقني غير مفهوم بدل رسالة واضحة، فنمنعها من هنا مبكراً
-    throw new Error("البوت لا يزال يجهز نفسه، انتظر ثوانٍ قليلة ثم حاول مرة أخرى");
-  }
-  const clean = (phoneNumber || "").replace(/\D/g, "");
-  if (!clean) {
-    throw new Error("رقم الهاتف غير صحيح");
-  }
-  const code = await client.requestPairingCode(clean, true);
-  state.pairingCode = code;
-  state.lastMessage = "أدخل كود الاقتران هذا في واتساب لربط الجهاز";
-  return code;
-}
-
-/**
- * يلغي طلب كود الاقتران الحالي ويرجّع العميل لوضع QR الطبيعي.
- */
-async function cancelPairing() {
-  if (!client) return;
-  await client.cancelPairingCode();
-  state.pairingCode = null;
 }
 
 function getClient() {
@@ -155,4 +130,37 @@ function getState() {
   return state;
 }
 
-module.exports = { createClient, getClient, getState, requestPairingCode, cancelPairing };
+/**
+ * يطلب كود اقتران (Pairing Code) من واتساب فعلياً لرقم هاتف معيّن، كطريقة
+ * ثانية للربط بجانب QR. الكود يتولّد ديناميكياً من client.requestPairingCode
+ * (وليس كوداً ثابتاً)، ويصلح فقط قبل إتمام تسجيل الدخول.
+ * @param {string} phoneNumber رقم الهاتف الدولي بدون + أو مسافات (مثال: 9665xxxxxxxx)
+ */
+async function requestPairingCode(phoneNumber) {
+  if (!client) throw new Error("عميل واتساب غير جاهز بعد، انتظر قليلاً وحاول مجدداً");
+  if (!phoneNumber || !/^\d{7,15}$/.test(phoneNumber)) {
+    throw new Error("رقم الهاتف غير صالح — أدخله بصيغة دولية بدون + أو رموز (مثال: 9665xxxxxxxx)");
+  }
+  if (state.status === "ready" || state.status === "authenticated") {
+    throw new Error("الحساب مرتبط بالفعل بواتساب");
+  }
+
+  const code = await client.requestPairingCode(phoneNumber);
+  state.pairingCode = code;
+  state.pairingPhoneNumber = phoneNumber;
+  state.status = "qr";
+  state.lastMessage = `أدخل الكود ${code} في واتساب: الأجهزة المرتبطة ← ربط جهاز ← الربط برقم الهاتف`;
+  return code;
+}
+
+/** يلغي طلب كود الاقتران الحالي إن كان مدعوماً في هذا الإصدار. */
+async function cancelPairingCode() {
+  if (!client) throw new Error("عميل واتساب غير جاهز بعد");
+  if (typeof client.cancelPairingCode === "function") {
+    await client.cancelPairingCode();
+  }
+  state.pairingCode = null;
+  state.pairingPhoneNumber = null;
+}
+
+module.exports = { createClient, getClient, getState, requestPairingCode, cancelPairingCode };

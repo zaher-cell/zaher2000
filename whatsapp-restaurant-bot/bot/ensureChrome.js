@@ -16,13 +16,19 @@
  * بالبدء. إذا فشل أي جزء، نرمي خطأ واضحاً فوراً — لا حلقات انتظار، لا محاولات
  * متكررة على أمل نجاح مختلف.
  *
- * @returns {Promise<{executablePath: string, args: string[]}>}
+ * @returns {Promise<{executablePath: string, args: string[], headless: boolean|string, defaultViewport: object|null}>}
  * @throws {Error} رسالة واضحة ومحددة إذا تعذر توفير متصفح صالح وقابل للتشغيل فعلياً
  */
 async function ensureChromeReady() {
   const fs = require("fs");
   const chromium = require("@sparticuz/chromium").default;
   const puppeteerCore = require("puppeteer-core");
+
+  // يجب ضبط هذا *قبل* قراءة chromium.args أو chromium.executablePath()، لأن
+  // القيمتين تعتمدان على وضع الرسوميات. تعطيل GPU إلزامي على سيرفر بدون
+  // كرت شاشة (مثل Render) — بدونه قد يحاول Chromium تهيئة GPU process فتفشل
+  // بصمت أو يتجمد المتصفح لاحقاً أثناء تحميل صفحة ثقيلة مثل واتساب ويب.
+  chromium.setGraphicsMode = false;
 
   console.log("⏳ [Chrome] استخراج Chromium المرفق مع الحزمة (محلي بالكامل، بدون إنترنت)...");
   const executablePath = await chromium.executablePath();
@@ -39,20 +45,21 @@ async function ensureChromeReady() {
     `✅ [Chrome] الملف التنفيذي موجود وصالح: ${executablePath} (${Math.round(stat.size / 1024 / 1024)}MB)`
   );
 
-  // نستثني --single-process تحديداً: موصى بها من @sparticuz/chromium أصلاً
-  // لبيئات serverless قصيرة العمر (طلب واحد ثم إغلاق)، لكن جلسة واتساب عندنا
-  // تبقى تعمل لساعات/أيام — وهذا الخيار معروف بتسببه في تجمّد أو انهيار صامت
-  // للصفحة بعد فترة طويلة من الاستخدام (البوت يبدو متصلاً لكن يتوقف عن
-  // استقبال الرسائل). كل الخيارات الأخرى الموصى بها تبقى كما هي.
-  const args = [...chromium.args.filter((a) => a !== "--single-process"), "--disable-dev-shm-usage"];
+  const args = [...chromium.args, "--disable-dev-shm-usage"];
+  // مهم جداً: @sparticuz/chromium يوزّع نسخة "headless shell" خاصة، ويجب
+  // تشغيلها بالوضع الذي بُنيت من أجله (chromium.headless) وليس true/false
+  // عادية — القيمة الخاطئة هنا معروفة بأنها تجعل الصفحات الثقيلة (مثل
+  // واتساب ويب) تتجمد أو تتعطل بصمت بعد التحميل الأولي بدل أن تفشل بوضوح.
+  const headless = chromium.headless;
+  const defaultViewport = chromium.defaultViewport;
 
   console.log("⏳ [Chrome] تجربة تشغيل فعلية للتأكد قبل تشغيل واتساب...");
-  const testBrowser = await puppeteerCore.launch({ executablePath, args, headless: true });
+  const testBrowser = await puppeteerCore.launch({ executablePath, args, headless, defaultViewport });
   const version = await testBrowser.version();
   await testBrowser.close();
   console.log(`✅ [Chrome] تم تشغيله فعلياً بنجاح (${version}) — جاهز لواتساب`);
 
-  return { executablePath, args };
+  return { executablePath, args, headless, defaultViewport };
 }
 
 module.exports = { ensureChromeReady };
